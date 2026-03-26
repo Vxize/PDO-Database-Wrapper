@@ -1,4 +1,5 @@
 ```
+
 // ============================================
 // USAGE EXAMPLE
 // ============================================
@@ -170,14 +171,16 @@ CREATE TABLE api_keys (
     description VARCHAR(255),
     max_requests INT DEFAULT NULL,     -- NULL = use global limit, 0 = unlimited, >0 = specific limit
     time_window INT DEFAULT NULL,      -- Time window in seconds, NULL = use global setting
+    expires_at DATETIME DEFAULT NULL,  -- NULL = never expires, otherwise expiration datetime
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO api_keys (key_value, description, max_requests, time_window) VALUES 
-('abc123def456', 'Development API Key - Unlimited', 0, NULL),           -- Unlimited requests
-('xyz789uvw012', 'Production API Key - 1000/min', 1000, 60),           -- 1000 requests per minute
-('limited456', 'Limited API Key - 10/hour', 10, 3600),                 -- 10 requests per hour
-('default789', 'Uses global limit', NULL, NULL);                        -- Uses global config
+INSERT INTO api_keys (key_value, description, max_requests, time_window, expires_at) VALUES 
+('abc123def456', 'Development API Key - Unlimited', 0, NULL, NULL),                           -- Never expires
+('xyz789uvw012', 'Production API Key - 1000/min', 1000, 60, NULL),                           -- Never expires
+('limited456', 'Limited API Key - 10/hour', 10, 3600, '2026-12-31 23:59:59'),               -- Expires on Dec 31, 2026
+('temp-key-789', 'Temporary key for testing', 100, 60, '2026-04-01 00:00:00'),              -- Expires on Apr 1, 2026
+('default789', 'Uses global limit', NULL, NULL, NULL);                                        -- Never expires
 
 For User/Password Authentication, create a table:
 CREATE TABLE users (
@@ -186,15 +189,18 @@ CREATE TABLE users (
     password VARCHAR(255) NOT NULL,
     max_requests INT DEFAULT NULL,     -- NULL = use global limit, 0 = unlimited, >0 = specific limit
     time_window INT DEFAULT NULL,      -- Time window in seconds, NULL = use global setting
+    expires_at DATETIME DEFAULT NULL,  -- NULL = never expires, otherwise expiration datetime
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Insert users with different rate limits
+-- Insert users with different rate limits and expiration times
 -- Password: 'mypassword123'
-INSERT INTO users (username, password, max_requests, time_window) VALUES 
-('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 0, NULL),      -- Unlimited
-('premium_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 500, 60),  -- 500/min
-('basic_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NULL, NULL); -- Global limit
+INSERT INTO users (username, password, max_requests, time_window, expires_at) VALUES 
+('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 0, NULL, NULL),                    -- Unlimited, never expires
+('premium_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 500, 60, NULL),              -- 500/min, never expires
+('trial_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 100, 60, '2026-05-01 00:00:00'),  -- Trial expires May 1, 2026
+('temp_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NULL, NULL, '2026-04-15 23:59:59'), -- Expires Apr 15, 2026
+('basic_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NULL, NULL, NULL);               -- Global limit, never expires
 
 For Database Logging (tables will be auto-created, but here's the schema):
 
@@ -265,7 +271,12 @@ SELECT key_value, description,
            WHEN max_requests IS NULL THEN 'Global limit'
            WHEN max_requests = 0 THEN 'Unlimited'
            ELSE CONCAT(max_requests, ' per ', time_window, 's')
-       END as rate_limit
+       END as rate_limit,
+       CASE 
+           WHEN expires_at IS NULL THEN 'Never expires'
+           WHEN expires_at > NOW() THEN CONCAT('Expires: ', expires_at)
+           ELSE CONCAT('EXPIRED: ', expires_at)
+       END as expiration_status
 FROM api_keys;
 
 -- View user rate limit settings
@@ -274,8 +285,49 @@ SELECT username,
            WHEN max_requests IS NULL THEN 'Global limit'
            WHEN max_requests = 0 THEN 'Unlimited'
            ELSE CONCAT(max_requests, ' per ', time_window, 's')
-       END as rate_limit
+       END as rate_limit,
+       CASE 
+           WHEN expires_at IS NULL THEN 'Never expires'
+           WHEN expires_at > NOW() THEN CONCAT('Expires: ', expires_at)
+           ELSE CONCAT('EXPIRED: ', expires_at)
+       END as expiration_status
 FROM users;
+
+-- Find expired API keys
+SELECT key_value, description, expires_at
+FROM api_keys
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find expired users
+SELECT username, expires_at
+FROM users
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find API keys expiring soon (within 7 days)
+SELECT key_value, description, expires_at, 
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM api_keys
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Find users expiring soon (within 7 days)
+SELECT username, expires_at,
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM users
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Clean up expired API keys (optional maintenance task)
+DELETE FROM api_keys 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+
+-- Clean up expired users (optional maintenance task)
+DELETE FROM users 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
 
 -- Clean up old logs (older than 30 days)
 DELETE FROM auth_failures WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
