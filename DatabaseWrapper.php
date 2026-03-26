@@ -472,12 +472,20 @@ class DatabaseWrapper
         }
 
         // Query database to check API key and get rate limit settings
-        $sql = "SELECT {$column}, max_requests, time_window FROM {$table} WHERE {$column} = ?";
+        $sql = "SELECT {$column}, max_requests, time_window, expires_at FROM {$table} WHERE {$column} = ?";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([$input['api_key']]);
         $result = $stmt->fetch();
 
         if ($result) {
+            // Check if API key has expired
+            if ($result['expires_at'] !== null) {
+                $expiresAt = strtotime($result['expires_at']);
+                if ($expiresAt !== false && $expiresAt < time()) {
+                    return false; // API key has expired
+                }
+            }
+            
             // Store the authenticated identifier and rate limit settings
             $this->authenticatedIdentifier = [
                 'type' => 'api_key',
@@ -519,13 +527,21 @@ class DatabaseWrapper
         }
 
         // Query database to get user's password hash and rate limit settings
-        $sql = "SELECT {$passColumn} as password, max_requests, time_window FROM {$table} WHERE {$userColumn} = ?";
+        $sql = "SELECT {$passColumn} as password, max_requests, time_window, expires_at FROM {$table} WHERE {$userColumn} = ?";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([$input['username']]);
         $result = $stmt->fetch();
 
         if (!$result) {
             return false;
+        }
+
+        // Check if user account has expired
+        if ($result['expires_at'] !== null) {
+            $expiresAt = strtotime($result['expires_at']);
+            if ($expiresAt !== false && $expiresAt < time()) {
+                return false; // User account has expired
+            }
         }
 
         // Verify password (assumes password_hash() was used to store passwords)
