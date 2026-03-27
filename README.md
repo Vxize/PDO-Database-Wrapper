@@ -1,5 +1,4 @@
 ```
-
 // ============================================
 // USAGE EXAMPLE
 // ============================================
@@ -169,38 +168,42 @@ CREATE TABLE api_keys (
     id INT AUTO_INCREMENT PRIMARY KEY,
     key_value VARCHAR(255) UNIQUE NOT NULL,
     description VARCHAR(255),
-    max_requests INT DEFAULT NULL,     -- NULL = use global limit, 0 = unlimited, >0 = specific limit
-    time_window INT DEFAULT NULL,      -- Time window in seconds, NULL = use global setting
-    expires_at DATETIME DEFAULT NULL,  -- NULL = never expires, otherwise expiration datetime
+    max_requests INT DEFAULT NULL,       -- NULL = use global limit, 0 = unlimited, >0 = specific limit
+    time_window INT DEFAULT NULL,        -- Time window in seconds, NULL = use global setting
+    expires_at DATETIME DEFAULT NULL,    -- NULL = never expires, otherwise expiration datetime
+    table_permissions JSON DEFAULT NULL, -- JSON: {"SELECT":["table1","table2"],"INSERT":["table1"],"UPDATE":[],"DELETE":[]}
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO api_keys (key_value, description, max_requests, time_window, expires_at) VALUES 
-('abc123def456', 'Development API Key - Unlimited', 0, NULL, NULL),                           -- Never expires
-('xyz789uvw012', 'Production API Key - 1000/min', 1000, 60, NULL),                           -- Never expires
-('limited456', 'Limited API Key - 10/hour', 10, 3600, '2026-12-31 23:59:59'),               -- Expires on Dec 31, 2026
-('temp-key-789', 'Temporary key for testing', 100, 60, '2026-04-01 00:00:00'),              -- Expires on Apr 1, 2026
-('default789', 'Uses global limit', NULL, NULL, NULL);                                        -- Never expires
+INSERT INTO api_keys (key_value, description, max_requests, time_window, expires_at, table_permissions) VALUES 
+('full-access-key', 'Admin Key - Full Access', 0, NULL, NULL, NULL),  -- NULL = full access to all tables
+('readonly-key', 'Read-Only Key', 1000, 60, NULL, '{"SELECT":["products","orders","customers","analytics"],"INSERT":[],"UPDATE":[],"DELETE":[]}'),
+('data-entry-key', 'Data Entry - Insert/Update Only', 500, 60, NULL, '{"SELECT":["products","orders"],"INSERT":["orders","order_items"],"UPDATE":["orders","order_items"],"DELETE":[]}'),
+('analytics-key', 'Analytics - Read Only Reports', 100, 60, NULL, '{"SELECT":["analytics","reports","logs"],"INSERT":[],"UPDATE":[],"DELETE":[]}'),
+('public-api-key', 'Public API - Products Only', NULL, NULL, NULL, '{"SELECT":["products","categories"],"INSERT":[],"UPDATE":[],"DELETE":[]}'),
+('maintenance-key', 'Maintenance - Full CRUD on specific tables', 0, NULL, '2026-12-31 23:59:59', '{"SELECT":["orders","products","inventory"],"INSERT":["inventory"],"UPDATE":["orders","products","inventory"],"DELETE":["orders"]}');
 
 For User/Password Authentication, create a table:
 CREATE TABLE users (
     id INT AUTO_INCREMENT PRIMARY KEY,
     username VARCHAR(100) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
-    max_requests INT DEFAULT NULL,     -- NULL = use global limit, 0 = unlimited, >0 = specific limit
-    time_window INT DEFAULT NULL,      -- Time window in seconds, NULL = use global setting
-    expires_at DATETIME DEFAULT NULL,  -- NULL = never expires, otherwise expiration datetime
+    max_requests INT DEFAULT NULL,       -- NULL = use global limit, 0 = unlimited, >0 = specific limit
+    time_window INT DEFAULT NULL,        -- Time window in seconds, NULL = use global setting
+    expires_at DATETIME DEFAULT NULL,    -- NULL = never expires, otherwise expiration datetime
+    table_permissions JSON DEFAULT NULL, -- JSON: {"SELECT":["table1","table2"],"INSERT":["table1"],"UPDATE":[],"DELETE":[]}
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Insert users with different rate limits and expiration times
+-- Insert users with different permissions
 -- Password: 'mypassword123'
-INSERT INTO users (username, password, max_requests, time_window, expires_at) VALUES 
-('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 0, NULL, NULL),                    -- Unlimited, never expires
-('premium_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 500, 60, NULL),              -- 500/min, never expires
-('trial_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 100, 60, '2026-05-01 00:00:00'),  -- Trial expires May 1, 2026
-('temp_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NULL, NULL, '2026-04-15 23:59:59'), -- Expires Apr 15, 2026
-('basic_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NULL, NULL, NULL);               -- Global limit, never expires
+INSERT INTO users (username, password, max_requests, time_window, expires_at, table_permissions) VALUES 
+('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 0, NULL, NULL, NULL),  -- Full access
+('manager', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 500, 60, NULL, '{"SELECT":["products","orders","customers","inventory"],"INSERT":["orders","products"],"UPDATE":["orders","products","inventory"],"DELETE":["orders"]}'),
+('analyst', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 100, 60, NULL, '{"SELECT":["analytics","reports","orders","products"],"INSERT":[],"UPDATE":[],"DELETE":[]}'),
+('customer_service', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 200, 60, NULL, '{"SELECT":["orders","customers","products"],"INSERT":[],"UPDATE":["orders"],"DELETE":[]}'),
+('data_entry', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NULL, NULL, NULL, '{"SELECT":["products"],"INSERT":["products","inventory"],"UPDATE":["products","inventory"],"DELETE":[]}'),
+('readonly_user', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', NULL, NULL, NULL, '{"SELECT":["products","orders","customers"],"INSERT":[],"UPDATE":[],"DELETE":[]}');
 
 For Database Logging (tables will be auto-created, but here's the schema):
 
@@ -265,33 +268,260 @@ GROUP BY identifier
 ORDER BY requests DESC
 LIMIT 20;
 
--- View API key rate limit settings
-SELECT key_value, description, 
-       CASE 
-           WHEN max_requests IS NULL THEN 'Global limit'
-           WHEN max_requests = 0 THEN 'Unlimited'
-           ELSE CONCAT(max_requests, ' per ', time_window, 's')
-       END as rate_limit,
-       CASE 
-           WHEN expires_at IS NULL THEN 'Never expires'
-           WHEN expires_at > NOW() THEN CONCAT('Expires: ', expires_at)
-           ELSE CONCAT('EXPIRED: ', expires_at)
-       END as expiration_status
+-- View API key permissions with detailed breakdown
+SELECT 
+    key_value, 
+    description,
+    CASE 
+        WHEN table_permissions IS NULL THEN 'Full access to all tables'
+        ELSE CONCAT(
+            'SELECT: ', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(table_permissions, '$.SELECT')), '[]'), ' | ',
+            'INSERT: ', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(table_permissions, '$.INSERT')), '[]'), ' | ',
+            'UPDATE: ', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(table_permissions, '$.UPDATE')), '[]'), ' | ',
+            'DELETE: ', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(table_permissions, '$.DELETE')), '[]')
+        )
+    END as permissions,
+    CASE 
+        WHEN max_requests IS NULL THEN 'Global limit'
+        WHEN max_requests = 0 THEN 'Unlimited'
+        ELSE CONCAT(max_requests, ' per ', time_window, 's')
+    END as rate_limit,
+    CASE 
+        WHEN expires_at IS NULL THEN 'Never expires'
+        WHEN expires_at > NOW() THEN CONCAT('Expires: ', expires_at)
+        ELSE CONCAT('EXPIRED: ', expires_at)
+    END as expiration_status
 FROM api_keys;
 
--- View user rate limit settings
-SELECT username, 
-       CASE 
-           WHEN max_requests IS NULL THEN 'Global limit'
-           WHEN max_requests = 0 THEN 'Unlimited'
-           ELSE CONCAT(max_requests, ' per ', time_window, 's')
-       END as rate_limit,
-       CASE 
-           WHEN expires_at IS NULL THEN 'Never expires'
-           WHEN expires_at > NOW() THEN CONCAT('Expires: ', expires_at)
-           ELSE CONCAT('EXPIRED: ', expires_at)
-       END as expiration_status
+-- View user permissions with detailed breakdown
+SELECT 
+    username,
+    CASE 
+        WHEN table_permissions IS NULL THEN 'Full access to all tables'
+        ELSE CONCAT(
+            'SELECT: ', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(table_permissions, '$.SELECT')), '[]'), ' | ',
+            'INSERT: ', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(table_permissions, '$.INSERT')), '[]'), ' | ',
+            'UPDATE: ', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(table_permissions, '$.UPDATE')), '[]'), ' | ',
+            'DELETE: ', COALESCE(JSON_UNQUOTE(JSON_EXTRACT(table_permissions, '$.DELETE')), '[]')
+        )
+    END as permissions,
+    CASE 
+        WHEN max_requests IS NULL THEN 'Global limit'
+        WHEN max_requests = 0 THEN 'Unlimited'
+        ELSE CONCAT(max_requests, ' per ', time_window, 's')
+    END as rate_limit,
+    CASE 
+        WHEN expires_at IS NULL THEN 'Never expires'
+        WHEN expires_at > NOW() THEN CONCAT('Expires: ', expires_at)
+        ELSE CONCAT('EXPIRED: ', expires_at)
+    END as expiration_status
 FROM users;
+
+-- Find API keys with SELECT permission on specific table
+SELECT key_value, description
+FROM api_keys
+WHERE JSON_CONTAINS(table_permissions, '"products"', '$.SELECT');
+
+-- Find users with INSERT permission on specific table
+SELECT username
+FROM users
+WHERE JSON_CONTAINS(table_permissions, '"orders"', '$.INSERT');
+
+-- Find users with no DELETE permissions on any table
+SELECT username
+FROM users
+WHERE JSON_LENGTH(table_permissions, '$.DELETE') = 0;
+
+-- Update permissions examples:
+
+-- Grant SELECT access to a new table
+UPDATE api_keys
+SET table_permissions = JSON_ARRAY_APPEND(table_permissions, '$.SELECT', 'new_table')
+WHERE key_value = 'readonly-key';
+
+-- Remove DELETE permission from all tables
+UPDATE users
+SET table_permissions = JSON_SET(table_permissions, '$.DELETE', JSON_ARRAY())
+WHERE username = 'data_entry';
+
+-- Add full CRUD permissions for a specific table
+UPDATE api_keys
+SET table_permissions = JSON_SET(
+    table_permissions,
+    '$.SELECT', JSON_ARRAY_APPEND(COALESCE(JSON_EXTRACT(table_permissions, '$.SELECT'), JSON_ARRAY()), '
+
+-- Find expired API keys
+SELECT key_value, description, expires_at
+FROM api_keys
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find expired users
+SELECT username, expires_at
+FROM users
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find API keys expiring soon (within 7 days)
+SELECT key_value, description, expires_at, 
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM api_keys
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Find users expiring soon (within 7 days)
+SELECT username, expires_at,
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM users
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Clean up expired API keys (optional maintenance task)
+DELETE FROM api_keys 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+
+-- Clean up expired users (optional maintenance task)
+DELETE FROM users 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+
+-- Clean up old logs (older than 30 days)
+DELETE FROM auth_failures WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+DELETE FROM rate_limits WHERE limit_type = 'request' AND last_attempt < DATE_SUB(NOW(), INTERVAL 1 DAY);
+*/
+?>, 'inventory'),
+    '$.INSERT', JSON_ARRAY_APPEND(COALESCE(JSON_EXTRACT(table_permissions, '$.INSERT'), JSON_ARRAY()), '
+
+-- Find expired API keys
+SELECT key_value, description, expires_at
+FROM api_keys
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find expired users
+SELECT username, expires_at
+FROM users
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find API keys expiring soon (within 7 days)
+SELECT key_value, description, expires_at, 
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM api_keys
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Find users expiring soon (within 7 days)
+SELECT username, expires_at,
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM users
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Clean up expired API keys (optional maintenance task)
+DELETE FROM api_keys 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+
+-- Clean up expired users (optional maintenance task)
+DELETE FROM users 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+
+-- Clean up old logs (older than 30 days)
+DELETE FROM auth_failures WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+DELETE FROM rate_limits WHERE limit_type = 'request' AND last_attempt < DATE_SUB(NOW(), INTERVAL 1 DAY);
+*/
+?>, 'inventory'),
+    '$.UPDATE', JSON_ARRAY_APPEND(COALESCE(JSON_EXTRACT(table_permissions, '$.UPDATE'), JSON_ARRAY()), '
+
+-- Find expired API keys
+SELECT key_value, description, expires_at
+FROM api_keys
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find expired users
+SELECT username, expires_at
+FROM users
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find API keys expiring soon (within 7 days)
+SELECT key_value, description, expires_at, 
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM api_keys
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Find users expiring soon (within 7 days)
+SELECT username, expires_at,
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM users
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Clean up expired API keys (optional maintenance task)
+DELETE FROM api_keys 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+
+-- Clean up expired users (optional maintenance task)
+DELETE FROM users 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+
+-- Clean up old logs (older than 30 days)
+DELETE FROM auth_failures WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+DELETE FROM rate_limits WHERE limit_type = 'request' AND last_attempt < DATE_SUB(NOW(), INTERVAL 1 DAY);
+*/
+?>, 'inventory'),
+    '$.DELETE', JSON_ARRAY_APPEND(COALESCE(JSON_EXTRACT(table_permissions, '$.DELETE'), JSON_ARRAY()), '
+
+-- Find expired API keys
+SELECT key_value, description, expires_at
+FROM api_keys
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find expired users
+SELECT username, expires_at
+FROM users
+WHERE expires_at IS NOT NULL AND expires_at < NOW();
+
+-- Find API keys expiring soon (within 7 days)
+SELECT key_value, description, expires_at, 
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM api_keys
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Find users expiring soon (within 7 days)
+SELECT username, expires_at,
+       DATEDIFF(expires_at, NOW()) as days_until_expiry
+FROM users
+WHERE expires_at IS NOT NULL 
+  AND expires_at > NOW() 
+  AND expires_at < DATE_ADD(NOW(), INTERVAL 7 DAY)
+ORDER BY expires_at;
+
+-- Clean up expired API keys (optional maintenance task)
+DELETE FROM api_keys 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+
+-- Clean up expired users (optional maintenance task)
+DELETE FROM users 
+WHERE expires_at IS NOT NULL AND expires_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+
+-- Clean up old logs (older than 30 days)
+DELETE FROM auth_failures WHERE created_at < DATE_SUB(NOW(), INTERVAL 30 DAY);
+DELETE FROM rate_limits WHERE limit_type = 'request' AND last_attempt < DATE_SUB(NOW(), INTERVAL 1 DAY);
+*/
+?>, 'inventory')
+)
+WHERE key_value = 'maintenance-key';
 
 -- Find expired API keys
 SELECT key_value, description, expires_at
