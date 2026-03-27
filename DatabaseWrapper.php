@@ -12,6 +12,7 @@ class DatabaseWrapper
     private $rateLimitFile;
     private $useDbLogging;
     private $authenticatedIdentifier;
+    private $tablePermissions;
 
     /**
      * Constructor - Initialize database connection
@@ -414,6 +415,12 @@ class DatabaseWrapper
             return;
         }
 
+        // Check table access permissions
+        if (isset($this->config['auth']) && !$this->checkTableAccess($sql)) {
+            $this->sendError("Access denied: You do not have permission to access one or more tables in this query", 403);
+            return;
+        }
+
         // Record request for rate limiting
         if (isset($this->config['request_rate_limit'])) {
             $this->recordRequest($clientIp);
@@ -472,7 +479,7 @@ class DatabaseWrapper
         }
 
         // Query database to check API key and get rate limit settings
-        $sql = "SELECT {$column}, max_requests, time_window, expires_at FROM {$table} WHERE {$column} = ?";
+        $sql = "SELECT {$column}, max_requests, time_window, expires_at, table_permissions FROM {$table} WHERE {$column} = ?";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([$input['api_key']]);
         $result = $stmt->fetch();
@@ -493,6 +500,10 @@ class DatabaseWrapper
                 'max_requests' => $result['max_requests'] ?? null,
                 'time_window' => $result['time_window'] ?? null
             ];
+            
+            // Parse and store table permissions
+            $this->tablePermissions = $this->parseTablePermissions($result['table_permissions']);
+            
             return true;
         }
 
@@ -527,7 +538,7 @@ class DatabaseWrapper
         }
 
         // Query database to get user's password hash and rate limit settings
-        $sql = "SELECT {$passColumn} as password, max_requests, time_window, expires_at FROM {$table} WHERE {$userColumn} = ?";
+        $sql = "SELECT {$passColumn} as password, max_requests, time_window, expires_at, table_permissions FROM {$table} WHERE {$userColumn} = ?";
         $stmt = $this->pdo->prepare($sql);
         $stmt->execute([$input['username']]);
         $result = $stmt->fetch();
@@ -553,10 +564,44 @@ class DatabaseWrapper
                 'max_requests' => $result['max_requests'] ?? null,
                 'time_window' => $result['time_window'] ?? null
             ];
+            
+            // Parse and store table permissions
+            $this->tablePermissions = $this->parseTablePermissions($result['table_permissions']);
+            
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * Parse JSON table permissions
+     * 
+     * @param string|null $permissionsJson JSON string of permissions
+     * @return array|null Parsed permissions array or null
+     */
+    private function parseTablePermissions($permissionsJson)
+    {
+        if ($permissionsJson === null || trim($permissionsJson) === '') {
+            return null; // No permissions set = full access
+        }
+        
+        $permissions = json_decode($permissionsJson, true);
+        
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log("Failed to parse table permissions JSON: " . json_last_error_msg());
+            return null;
+        }
+        
+        // Normalize to uppercase operation names and ensure arrays
+        $normalized = [];
+        foreach (['SELECT', 'INSERT', 'UPDATE', 'DELETE'] as $operation) {
+            $normalized[$operation] = isset($permissions[$operation]) && is_array($permissions[$operation]) 
+                ? array_map('strtolower', $permissions[$operation]) 
+                : [];
+        }
+        
+        return $normalized;
     }
 
     /**
