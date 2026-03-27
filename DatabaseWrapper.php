@@ -1268,12 +1268,16 @@ class DatabaseWrapper
     {
         // Clean up expired lockouts and old data
         $currentTime = time();
-        foreach ($data as $ip => $ipData) {
-            if (isset($ipData['locked_until']) && $ipData['locked_until'] < $currentTime) {
-                unset($data[$ip]['locked_until']);
-            }
-            if (empty($data[$ip]['attempts']) && !isset($data[$ip]['locked_until'])) {
-                unset($data[$ip]);
+        foreach ($data as $key => $section) {
+            if ($key === 'auth') {
+                foreach ($section as $ip => $ipData) {
+                    if (isset($ipData['locked_until']) && $ipData['locked_until'] < $currentTime) {
+                        unset($data[$key][$ip]['locked_until']);
+                    }
+                    if (empty($data[$key][$ip]['attempts']) && !isset($data[$key][$ip]['locked_until'])) {
+                        unset($data[$key][$ip]);
+                    }
+                }
             }
         }
 
