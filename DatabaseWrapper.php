@@ -575,6 +575,106 @@ class DatabaseWrapper
     }
 
     /**
+     * Check if the query has access to the required tables and operations
+     * 
+     * @param string $sql SQL query
+     * @return bool True if access is allowed
+     */
+    private function checkTableAccess($sql)
+    {
+        // If no permissions are set, allow all operations (full access)
+        if ($this->tablePermissions === null) {
+            return true;
+        }
+        
+        // Determine the SQL operation type
+        $operation = $this->getSQLOperation($sql);
+        
+        if ($operation === null) {
+            // Unknown operation, deny by default for security
+            return false;
+        }
+        
+        // Extract table names from SQL query
+        $tablesInQuery = $this->extractTablesFromSQL($sql);
+        
+        if (empty($tablesInQuery)) {
+            // Could not determine tables, deny by default for security
+            return false;
+        }
+        
+        // Check if all tables in the query are allowed for this operation
+        $allowedTables = $this->tablePermissions[$operation] ?? [];
+        
+        foreach ($tablesInQuery as $table) {
+            if (!in_array($table, $allowedTables)) {
+                return false; // Table not allowed for this operation
+            }
+        }
+        
+        return true; // All tables are allowed for this operation
+    }
+
+    /**
+     * Determine the SQL operation type from query
+     * 
+     * @param string $sql SQL query
+     * @return string|null Operation type (SELECT, INSERT, UPDATE, DELETE) or null
+     */
+    private function getSQLOperation($sql)
+    {
+        $sql = trim(strtoupper($sql));
+        
+        // Determine operation based on first keyword
+        if (strpos($sql, 'SELECT') === 0 || strpos($sql, 'SHOW') === 0 || strpos($sql, 'DESCRIBE') === 0 || strpos($sql, 'DESC') === 0) {
+            return 'SELECT';
+        } elseif (strpos($sql, 'INSERT') === 0) {
+            return 'INSERT';
+        } elseif (strpos($sql, 'UPDATE') === 0) {
+            return 'UPDATE';
+        } elseif (strpos($sql, 'DELETE') === 0) {
+            return 'DELETE';
+        }
+        
+        // Handle other operations (TRUNCATE, DROP, ALTER, etc.)
+        // These are not in our permission model, so deny by default
+        return null;
+    }
+
+    /**
+     * Extract table names from SQL query
+     * 
+     * @param string $sql SQL query
+     * @return array Array of table names found in query
+     */
+    private function extractTablesFromSQL($sql)
+    {
+        $tables = [];
+        
+        // Pattern to match table names after FROM, JOIN, INTO, UPDATE, and TABLE keywords
+        $patterns = [
+            '/FROM\s+`?(\w+)`?/i',
+            '/JOIN\s+`?(\w+)`?/i',
+            '/INTO\s+`?(\w+)`?/i',
+            '/UPDATE\s+`?(\w+)`?/i',
+            '/TABLE\s+`?(\w+)`?/i',
+        ];
+        
+        foreach ($patterns as $pattern) {
+            if (preg_match_all($pattern, $sql, $matches)) {
+                foreach ($matches[1] as $table) {
+                    $table = strtolower(trim($table));
+                    if (!empty($table) && !in_array($table, $tables)) {
+                        $tables[] = $table;
+                    }
+                }
+            }
+        }
+        
+        return $tables;
+    }
+
+    /**
      * Parse JSON table permissions
      * 
      * @param string|null $permissionsJson JSON string of permissions
