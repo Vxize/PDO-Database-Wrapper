@@ -389,7 +389,7 @@ class DatabaseWrapper
             $this->resetAuthFailedAttempts($clientIp);
         }
 
-        // NEW: Post-auth request rate limit check (consistent identifier: per-user or IP)
+        // Post-auth request rate limit check (consistent identifier: per-user or IP)
         if (isset($this->config['request_rate_limit'])) {
             if ($this->isRequestRateLimited($clientIp)) {
                 // Optional: $this->logFailedAuth($clientIp, 'Request rate limit exceeded');
@@ -419,8 +419,9 @@ class DatabaseWrapper
             return;
         }
 
-        // Execute query (add recordRequest here if you want to log *only successful queries*)
-        $this->recordRequest($clientIp);
+        if (isset($this->config['request_rate_limit'])) {
+            $this->recordRequest($clientIp);
+        }
 
         $this->executeQuery($sql, $params);
     }
