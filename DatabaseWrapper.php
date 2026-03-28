@@ -1,4 +1,5 @@
 <?php
+
 /**
  * PDO Database Wrapper Class
  * Handles database connections and POST request query execution
@@ -45,9 +46,9 @@ class DatabaseWrapper
         $this->logFile = $config['log_file'] ?? __DIR__ . '/auth_failures.log';
         $this->rateLimitFile = $config['rate_limit_file'] ?? __DIR__ . '/rate_limit.json';
         $this->useDbLogging = isset($config['logging']) && $config['logging']['type'] === 'database';
-        
+
         $this->connect();
-        
+
         // Initialize logging database connection if configured
         if ($this->useDbLogging) {
             $this->connectLoggingDatabase();
@@ -63,7 +64,7 @@ class DatabaseWrapper
         try {
             $driver = $this->config['driver'] ?? 'mysql';
             $charset = $this->config['charset'] ?? 'utf8mb4';
-            
+
             // Build DSN based on driver
             switch ($driver) {
                 case 'mysql':
@@ -132,7 +133,6 @@ class DatabaseWrapper
                 $this->config['password'] ?? null,
                 $options
             );
-
         } catch (PDOException $e) {
             $this->sendError("Database connection failed: " . $e->getMessage(), 500);
         }
@@ -145,18 +145,18 @@ class DatabaseWrapper
     {
         try {
             $loggingConfig = $this->config['logging'];
-            
+
             // Use same database connection
             if ($loggingConfig['connection'] === 'same') {
                 $this->logPdo = $this->pdo;
                 return;
             }
-            
+
             // Create separate database connection
             $logDbConfig = $loggingConfig['connection'];
             $driver = $logDbConfig['driver'] ?? 'mysql';
             $charset = $logDbConfig['charset'] ?? 'utf8mb4';
-            
+
             // Build DSN based on driver
             switch ($driver) {
                 case 'mysql':
@@ -218,7 +218,6 @@ class DatabaseWrapper
                 $logDbConfig['password'] ?? null,
                 $options
             );
-
         } catch (PDOException $e) {
             // Fall back to file logging if database connection fails
             $this->useDbLogging = false;
@@ -235,9 +234,9 @@ class DatabaseWrapper
             $loggingConfig = $this->config['logging'];
             $rateLimitTable = $loggingConfig['rate_limit_table'] ?? 'rate_limits';
             $authLogTable = $loggingConfig['auth_log_table'] ?? 'auth_failures';
-            
+
             $driver = $this->logPdo->getAttribute(PDO::ATTR_DRIVER_NAME);
-            
+
             // Create rate_limits table
             if ($driver === 'mysql') {
                 $sql = "CREATE TABLE IF NOT EXISTS {$rateLimitTable} (
@@ -292,9 +291,9 @@ class DatabaseWrapper
                     last_attempt DATETIME DEFAULT GETDATE()
                 )";
             }
-            
+
             $this->logPdo->exec($sql);
-            
+
             // Create auth_failures table
             if ($driver === 'mysql') {
                 $sql = "CREATE TABLE IF NOT EXISTS {$authLogTable} (
@@ -339,9 +338,8 @@ class DatabaseWrapper
                     created_at DATETIME DEFAULT GETDATE()
                 )";
             }
-            
+
             $this->logPdo->exec($sql);
-            
         } catch (PDOException $e) {
             // If table creation fails, fall back to file logging
             $this->useDbLogging = false;
@@ -362,7 +360,7 @@ class DatabaseWrapper
 
         // Get POST data
         $contentType = $_SERVER['CONTENT_TYPE'] ?? '';
-        
+
         if (strpos($contentType, 'application/json') !== false) {
             $input = json_decode(file_get_contents('php://input'), true);
         } else {
@@ -370,15 +368,6 @@ class DatabaseWrapper
         }
 
         $clientIp = $this->getClientIp();
-
-        // Check request rate limit (applies to all requests)
-        if (isset($this->config['request_rate_limit'])) {
-            if ($this->isRequestRateLimited($clientIp)) {
-                $this->logFailedAuth($clientIp, 'Request rate limit exceeded');
-                $this->sendError("Too many requests. Please slow down.", 429);
-                return;
-            }
-        }
 
         // Authenticate if authentication is configured
         if (isset($this->config['auth'])) {
@@ -398,6 +387,15 @@ class DatabaseWrapper
 
             // Reset auth failed attempts on successful authentication
             $this->resetAuthFailedAttempts($clientIp);
+        }
+
+        // NEW: Post-auth request rate limit check (consistent identifier: per-user or IP)
+        if (isset($this->config['request_rate_limit'])) {
+            if ($this->isRequestRateLimited($clientIp)) {
+                // Optional: $this->logFailedAuth($clientIp, 'Request rate limit exceeded');
+                $this->sendError("Too many requests. Please slow down.", 429);
+                return;
+            }
         }
 
         // Validate required SQL parameter
@@ -421,12 +419,9 @@ class DatabaseWrapper
             return;
         }
 
-        // Record request for rate limiting
-        if (isset($this->config['request_rate_limit'])) {
-            $this->recordRequest($clientIp);
-        }
+        // Execute query (add recordRequest here if you want to log *only successful queries*)
+        $this->recordRequest($clientIp);
 
-        // Execute query
         $this->executeQuery($sql, $params);
     }
 
@@ -492,7 +487,7 @@ class DatabaseWrapper
                     return false; // API key has expired
                 }
             }
-            
+
             // Store the authenticated identifier and rate limit settings
             $this->authenticatedIdentifier = [
                 'type' => 'api_key',
@@ -500,10 +495,10 @@ class DatabaseWrapper
                 'max_requests' => $result['max_requests'] ?? null,
                 'time_window' => $result['time_window'] ?? null
             ];
-            
+
             // Parse and store table permissions
             $this->tablePermissions = $this->parseTablePermissions($result['table_permissions']);
-            
+
             return true;
         }
 
@@ -564,10 +559,10 @@ class DatabaseWrapper
                 'max_requests' => $result['max_requests'] ?? null,
                 'time_window' => $result['time_window'] ?? null
             ];
-            
+
             // Parse and store table permissions
             $this->tablePermissions = $this->parseTablePermissions($result['table_permissions']);
-            
+
             return true;
         }
 
@@ -586,32 +581,32 @@ class DatabaseWrapper
         if ($this->tablePermissions === null) {
             return true;
         }
-        
+
         // Determine the SQL operation type
         $operation = $this->getSQLOperation($sql);
-        
+
         if ($operation === null) {
             // Unknown operation, deny by default for security
             return false;
         }
-        
+
         // Extract table names from SQL query
         $tablesInQuery = $this->extractTablesFromSQL($sql);
-        
+
         if (empty($tablesInQuery)) {
             // Could not determine tables, deny by default for security
             return false;
         }
-        
+
         // Check if all tables in the query are allowed for this operation
         $allowedTables = $this->tablePermissions[$operation] ?? [];
-        
+
         foreach ($tablesInQuery as $table) {
             if (!in_array($table, $allowedTables)) {
                 return false; // Table not allowed for this operation
             }
         }
-        
+
         return true; // All tables are allowed for this operation
     }
 
@@ -624,7 +619,7 @@ class DatabaseWrapper
     private function getSQLOperation($sql)
     {
         $sql = trim(strtoupper($sql));
-        
+
         // Determine operation based on first keyword
         if (strpos($sql, 'SELECT') === 0 || strpos($sql, 'SHOW') === 0 || strpos($sql, 'DESCRIBE') === 0 || strpos($sql, 'DESC') === 0) {
             return 'SELECT';
@@ -635,7 +630,7 @@ class DatabaseWrapper
         } elseif (strpos($sql, 'DELETE') === 0) {
             return 'DELETE';
         }
-        
+
         // Handle other operations (TRUNCATE, DROP, ALTER, etc.)
         // These are not in our permission model, so deny by default
         return null;
@@ -650,7 +645,7 @@ class DatabaseWrapper
     private function extractTablesFromSQL($sql)
     {
         $tables = [];
-        
+
         // Pattern to match table names after FROM, JOIN, INTO, UPDATE, and TABLE keywords
         $patterns = [
             '/FROM\s+`?(\w+)`?/i',
@@ -659,7 +654,7 @@ class DatabaseWrapper
             '/UPDATE\s+`?(\w+)`?/i',
             '/TABLE\s+`?(\w+)`?/i',
         ];
-        
+
         foreach ($patterns as $pattern) {
             if (preg_match_all($pattern, $sql, $matches)) {
                 foreach ($matches[1] as $table) {
@@ -670,7 +665,7 @@ class DatabaseWrapper
                 }
             }
         }
-        
+
         return $tables;
     }
 
@@ -685,22 +680,22 @@ class DatabaseWrapper
         if ($permissionsJson === null || trim($permissionsJson) === '') {
             return null; // No permissions set = full access
         }
-        
+
         $permissions = json_decode($permissionsJson, true);
-        
+
         if (json_last_error() !== JSON_ERROR_NONE) {
             error_log("Failed to parse table permissions JSON: " . json_last_error_msg());
             return null;
         }
-        
+
         // Normalize to uppercase operation names and ensure arrays
         $normalized = [];
         foreach (['SELECT', 'INSERT', 'UPDATE', 'DELETE'] as $operation) {
-            $normalized[$operation] = isset($permissions[$operation]) && is_array($permissions[$operation]) 
-                ? array_map('strtolower', $permissions[$operation]) 
+            $normalized[$operation] = isset($permissions[$operation]) && is_array($permissions[$operation])
+                ? array_map('strtolower', $permissions[$operation])
                 : [];
         }
-        
+
         return $normalized;
     }
 
@@ -725,6 +720,10 @@ class DatabaseWrapper
                 if (strpos($ip, ',') !== false) {
                     $ips = explode(',', $ip);
                     $ip = trim($ips[0]);
+                }
+                // Strip port if present (e.g., 11.22.33.44:12345 -> 11.22.33.44)
+                if (strpos($ip, ':') !== false) {
+                    $ip = explode(':', $ip)[0];
                 }
                 return $ip;
             }
@@ -770,35 +769,34 @@ class DatabaseWrapper
             $loggingConfig = $this->config['logging'];
             $rateLimitTable = $loggingConfig['rate_limit_table'] ?? 'rate_limits';
             $currentTime = time();
-            
+
             // Clean up expired records
             $sql = "DELETE FROM {$rateLimitTable} WHERE locked_until IS NOT NULL AND locked_until < ?";
             $stmt = $this->logPdo->prepare($sql);
             $stmt->execute([$currentTime]);
-            
+
             // Check if IP is locked out
             $sql = "SELECT locked_until, attempt_count, last_attempt FROM {$rateLimitTable} WHERE ip_address = ? AND limit_type = 'auth'";
             $stmt = $this->logPdo->prepare($sql);
             $stmt->execute([$ip]);
             $result = $stmt->fetch();
-            
+
             if (!$result) {
                 return false;
             }
-            
+
             // Check if currently locked
             if ($result['locked_until'] && $result['locked_until'] > $currentTime) {
                 return true;
             }
-            
+
             // Check if attempts are within time window
             $lastAttempt = strtotime($result['last_attempt']);
             if (($currentTime - $lastAttempt) < $timeWindow) {
                 return $result['attempt_count'] >= $maxAttempts;
             }
-            
+
             return false;
-            
         } catch (PDOException $e) {
             error_log("Auth rate limit check failed: " . $e->getMessage());
             return false;
@@ -832,7 +830,7 @@ class DatabaseWrapper
 
         // Clean up old attempts outside the time window
         if (isset($ipData['attempts'])) {
-            $ipData['attempts'] = array_filter($ipData['attempts'], function($timestamp) use ($currentTime, $timeWindow) {
+            $ipData['attempts'] = array_filter($ipData['attempts'], function ($timestamp) use ($currentTime, $timeWindow) {
                 return ($currentTime - $timestamp) < $timeWindow;
             });
         }
@@ -852,12 +850,12 @@ class DatabaseWrapper
     {
         // Get rate limit settings (per-user/api-key or global)
         $rateLimitSettings = $this->getRequestRateLimitSettings();
-        
+
         // If max_requests is 0, unlimited requests allowed
         if ($rateLimitSettings['max_requests'] === 0) {
             return false;
         }
-        
+
         // If no rate limit configured, don't limit
         if ($rateLimitSettings['max_requests'] === null) {
             return false;
@@ -884,21 +882,21 @@ class DatabaseWrapper
         if (isset($this->authenticatedIdentifier)) {
             $maxRequests = $this->authenticatedIdentifier['max_requests'];
             $timeWindow = $this->authenticatedIdentifier['time_window'];
-            
+
             // If user/api-key has specific limits set (not null)
             if ($maxRequests !== null) {
                 // Use user-specific time window or default to global
                 if ($timeWindow === null && isset($this->config['request_rate_limit'])) {
                     $timeWindow = $this->config['request_rate_limit']['time_window'] ?? 60;
                 }
-                
+
                 return [
                     'max_requests' => (int)$maxRequests,
                     'time_window' => (int)$timeWindow
                 ];
             }
         }
-        
+
         // Fallback to global request rate limit
         if (isset($this->config['request_rate_limit'])) {
             return [
@@ -906,7 +904,7 @@ class DatabaseWrapper
                 'time_window' => $this->config['request_rate_limit']['time_window'] ?? 60
             ];
         }
-        
+
         // No rate limit configured
         return [
             'max_requests' => null,
@@ -928,10 +926,10 @@ class DatabaseWrapper
             $loggingConfig = $this->config['logging'];
             $rateLimitTable = $loggingConfig['rate_limit_table'] ?? 'rate_limits';
             $currentTime = time();
-            
+
             // Get identifier for this request
             $identifier = $this->getIdentifierForRateLimit();
-            
+
             // Count requests within time window for this identifier
             $sql = "SELECT COUNT(*) as request_count FROM {$rateLimitTable} 
                     WHERE identifier = ? AND limit_type = 'request' 
@@ -939,9 +937,8 @@ class DatabaseWrapper
             $stmt = $this->logPdo->prepare($sql);
             $stmt->execute([$identifier, date('Y-m-d H:i:s', $currentTime - $timeWindow)]);
             $result = $stmt->fetch();
-            
+
             return $result['request_count'] >= $maxRequests;
-            
         } catch (PDOException $e) {
             error_log("Request rate limit check failed: " . $e->getMessage());
             return false;
@@ -960,7 +957,7 @@ class DatabaseWrapper
     {
         $rateLimitData = $this->loadRateLimitData();
         $currentTime = time();
-        
+
         // Get identifier for this request
         $identifier = $this->getIdentifierForRateLimit();
 
@@ -969,7 +966,7 @@ class DatabaseWrapper
         }
 
         // Clean up old requests outside the time window
-        $rateLimitData['request'][$identifier] = array_filter($rateLimitData['request'][$identifier], function($timestamp) use ($currentTime, $timeWindow) {
+        $rateLimitData['request'][$identifier] = array_filter($rateLimitData['request'][$identifier], function ($timestamp) use ($currentTime, $timeWindow) {
             return ($currentTime - $timestamp) < $timeWindow;
         });
 
@@ -990,7 +987,7 @@ class DatabaseWrapper
             $value = $this->authenticatedIdentifier['value'];
             return "{$type}:{$value}";
         }
-        
+
         // Fallback to IP-based if no authentication
         return "ip:" . $this->getClientIp();
     }
@@ -1031,42 +1028,40 @@ class DatabaseWrapper
             $loggingConfig = $this->config['logging'];
             $rateLimitTable = $loggingConfig['rate_limit_table'] ?? 'rate_limits';
             $currentTime = time();
-            
+
             // Get current record
             $sql = "SELECT id, attempt_count, last_attempt FROM {$rateLimitTable} WHERE ip_address = ? AND limit_type = 'auth'";
             $stmt = $this->logPdo->prepare($sql);
             $stmt->execute([$ip]);
             $result = $stmt->fetch();
-            
+
             if ($result) {
                 $lastAttempt = strtotime($result['last_attempt']);
                 $attemptCount = $result['attempt_count'];
-                
+
                 // Reset counter if outside time window
                 if (($currentTime - $lastAttempt) >= $timeWindow) {
                     $attemptCount = 0;
                 }
-                
+
                 $attemptCount++;
-                
+
                 // Check if should lock
                 $lockedUntil = null;
                 if ($attemptCount >= $maxAttempts) {
                     $lockedUntil = $currentTime + $lockoutTime;
                 }
-                
+
                 // Update record
                 $sql = "UPDATE {$rateLimitTable} SET attempt_count = ?, locked_until = ?, last_attempt = CURRENT_TIMESTAMP WHERE id = ?";
                 $stmt = $this->logPdo->prepare($sql);
                 $stmt->execute([$attemptCount, $lockedUntil, $result['id']]);
-                
             } else {
                 // Insert new record
                 $sql = "INSERT INTO {$rateLimitTable} (ip_address, limit_type, attempt_count, locked_until) VALUES (?, 'auth', 1, NULL)";
                 $stmt = $this->logPdo->prepare($sql);
                 $stmt->execute([$ip]);
             }
-            
         } catch (PDOException $e) {
             error_log("Failed to record auth rate limit attempt: " . $e->getMessage());
         }
@@ -1097,7 +1092,7 @@ class DatabaseWrapper
         $rateLimitData['auth'][$ip]['attempts'][] = $currentTime;
 
         // Clean up old attempts
-        $rateLimitData['auth'][$ip]['attempts'] = array_filter($rateLimitData['auth'][$ip]['attempts'], function($timestamp) use ($currentTime, $timeWindow) {
+        $rateLimitData['auth'][$ip]['attempts'] = array_filter($rateLimitData['auth'][$ip]['attempts'], function ($timestamp) use ($currentTime, $timeWindow) {
             return ($currentTime - $timestamp) < $timeWindow;
         });
 
@@ -1137,22 +1132,22 @@ class DatabaseWrapper
         try {
             $loggingConfig = $this->config['logging'];
             $rateLimitTable = $loggingConfig['rate_limit_table'] ?? 'rate_limits';
-            
+
             // Get identifier for this request
             $identifier = $this->getIdentifierForRateLimit();
-            
+
             // Insert new request record
             $sql = "INSERT INTO {$rateLimitTable} (ip_address, identifier, limit_type, attempt_count) VALUES (?, ?, 'request', 1)";
             $stmt = $this->logPdo->prepare($sql);
             $stmt->execute([$ip, $identifier]);
-            
+
             // Clean up old records
             $rateLimitSettings = $this->getRequestRateLimitSettings();
             $timeWindow = $rateLimitSettings['time_window'] ?? 60;
             $sql = "DELETE FROM {$rateLimitTable} WHERE limit_type = 'request' AND last_attempt < ?";
             $stmt = $this->logPdo->prepare($sql);
             $stmt->execute([date('Y-m-d H:i:s', time() - $timeWindow - 3600)]); // Keep extra hour for safety
-            
+
         } catch (PDOException $e) {
             error_log("Failed to record request: " . $e->getMessage());
         }
@@ -1167,10 +1162,10 @@ class DatabaseWrapper
     {
         $rateLimitData = $this->loadRateLimitData();
         $currentTime = time();
-        
+
         // Get identifier for this request
         $identifier = $this->getIdentifierForRateLimit();
-        
+
         $rateLimitSettings = $this->getRequestRateLimitSettings();
         $timeWindow = $rateLimitSettings['time_window'] ?? 60;
 
@@ -1186,7 +1181,7 @@ class DatabaseWrapper
         $rateLimitData['request'][$identifier][] = $currentTime;
 
         // Clean up old requests
-        $rateLimitData['request'][$identifier] = array_filter($rateLimitData['request'][$identifier], function($timestamp) use ($currentTime, $timeWindow) {
+        $rateLimitData['request'][$identifier] = array_filter($rateLimitData['request'][$identifier], function ($timestamp) use ($currentTime, $timeWindow) {
             return ($currentTime - $timestamp) < $timeWindow;
         });
 
@@ -1217,11 +1212,10 @@ class DatabaseWrapper
         try {
             $loggingConfig = $this->config['logging'];
             $rateLimitTable = $loggingConfig['rate_limit_table'] ?? 'rate_limits';
-            
+
             $sql = "DELETE FROM {$rateLimitTable} WHERE ip_address = ? AND limit_type = 'auth'";
             $stmt = $this->logPdo->prepare($sql);
             $stmt->execute([$ip]);
-            
         } catch (PDOException $e) {
             error_log("Failed to reset auth rate limit: " . $e->getMessage());
         }
@@ -1235,7 +1229,7 @@ class DatabaseWrapper
     private function resetAuthFailedAttemptsFile($ip)
     {
         $rateLimitData = $this->loadRateLimitData();
-        
+
         if (isset($rateLimitData['auth'][$ip])) {
             unset($rateLimitData['auth'][$ip]);
             $this->saveRateLimitData($rateLimitData);
@@ -1255,7 +1249,7 @@ class DatabaseWrapper
 
         $data = file_get_contents($this->rateLimitFile);
         $decoded = json_decode($data, true);
-        
+
         return is_array($decoded) ? $decoded : [];
     }
 
@@ -1323,11 +1317,10 @@ class DatabaseWrapper
         try {
             $loggingConfig = $this->config['logging'];
             $authLogTable = $loggingConfig['auth_log_table'] ?? 'auth_failures';
-            
+
             $sql = "INSERT INTO {$authLogTable} (ip_address, identifier, reason, user_agent) VALUES (?, ?, ?, ?)";
             $stmt = $this->logPdo->prepare($sql);
             $stmt->execute([$ip, $identifier, $reason, $userAgent]);
-            
         } catch (PDOException $e) {
             error_log("Failed to log authentication failure: " . $e->getMessage());
             // Fall back to file logging
@@ -1346,7 +1339,7 @@ class DatabaseWrapper
     private function logFailedAuthFile($ip, $identifier, $reason, $userAgent)
     {
         $timestamp = date('Y-m-d H:i:s');
-        
+
         $logEntry = sprintf(
             "[%s] IP: %s | %s | Reason: %s | User-Agent: %s\n",
             $timestamp,
@@ -1388,7 +1381,6 @@ class DatabaseWrapper
                     'last_insert_id' => $this->pdo->lastInsertId()
                 ]);
             }
-
         } catch (PDOException $e) {
             $this->sendError("Query execution failed: " . $e->getMessage(), 400);
         }
