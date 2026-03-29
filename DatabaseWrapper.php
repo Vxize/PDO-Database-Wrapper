@@ -647,20 +647,32 @@ class DatabaseWrapper
     {
         $tables = [];
 
-        // Pattern to match table names after FROM, JOIN, INTO, UPDATE, and TABLE keywords
         $patterns = [
+            // Standard: FROM table, JOIN table
             '/FROM\s+`?(\w+)`?/i',
             '/JOIN\s+`?(\w+)`?/i',
+            // INSERT: INTO table
             '/INTO\s+`?(\w+)`?/i',
+            // UPDATE table
             '/UPDATE\s+`?(\w+)`?/i',
-            '/TABLE\s+`?(\w+)`?/i',
+            // Table name with schema: db.schema.table or schema.table
+            '/FROM\s+`?(\w+)`?\.`?(\w+)`?\.`?(\w+)`?/i',
+            '/JOIN\s+`?(\w+)`?\.`?(\w+)`?\.`?(\w+)`?/i',
+            // SQL Server brackets: [table]
+            '/FROM\s+\[(\w+)\]/i',
+            '/JOIN\s+\[(\w+)\]/i',
+            '/INTO\s+\[(\w+)\]/i',
+            '/UPDATE\s+\[(\w+)\]/i',
         ];
 
         foreach ($patterns as $pattern) {
             if (preg_match_all($pattern, $sql, $matches)) {
-                foreach ($matches[1] as $table) {
+                // Get the last captured group (table name)
+                $lastIndex = count($matches) - 1;
+                foreach ($matches[$lastIndex] as $table) {
                     $table = strtolower(trim($table));
-                    if (!empty($table) && !in_array($table, $tables)) {
+                    // Filter out keywords and aliases
+                    if (!empty($table) && !in_array($table, ['table', 'dual', 'all']) && !in_array($table, $tables)) {
                         $tables[] = $table;
                     }
                 }
@@ -1353,6 +1365,62 @@ class DatabaseWrapper
         file_put_contents($this->logFile, $logEntry, FILE_APPEND | LOCK_EX);
     }
 
+    // Limit SQL query before executeQuery()
+    private function validateSQL($sql)
+    {
+        $sql = trim($sql);
+
+        // Block multiple statements (SQL injection technique)
+        // Check for semicolons that would indicate multiple queries
+        // We need to be careful about semicolons inside strings
+        $testSql = preg_replace('/"[^"]*"|\'[^\']*\'/', '', $sql);  // Remove quoted strings
+
+        if (strpos($testSql, ';') !== false) {
+            // There's a semicolon outside of string literals - likely multiple statements
+            // Allow CASE statements which may have semicolons
+            if (!preg_match('/CASE\s+WHEN.*;.*END/i', $testSql)) {
+                return false;
+            }
+        }
+
+        $upperSql = strtoupper($sql);
+
+        // Block dangerous commands at start (DDL, DCL, procedural, file operations)
+        /*
+        $blockedPatterns = [
+            '/^DROP\s+/',
+            '/^TRUNCATE\s+/',
+            '/^ALTER\s+/',
+            '/^CREATE\s+/',
+            '/^GRANT\s+/',
+            '/^REVOKE\s+/',
+            '/^EXEC(UTE)?\s+/i',
+            '/^XP_/i',
+            '/^SP_/i',
+            '/^SHUTDOWN/i',
+            '/^INTO\s+OUTFILE/i',
+            '/^LOAD\s+DATA/i',
+        ];
+
+        foreach ($blockedPatterns as $pattern) {
+            if (preg_match($pattern, $upperSql)) {
+                return false;
+            }
+        }
+        */
+
+        // Whitelist allowed starting keywords
+        $allowedStarts = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'SHOW', 'DESCRIBE', 'DESC'];
+
+        foreach ($allowedStarts as $keyword) {
+            if (strpos($upperSql, $keyword) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /**
      * Execute SQL query with optional parameters
      * 
@@ -1361,6 +1429,10 @@ class DatabaseWrapper
      */
     private function executeQuery($sql, $params = [])
     {
+        if (!$this->validateSQL($sql)) {
+            $this->sendError("SQL query not allowed. Only SELECT, INSERT, UPDATE, DELETE operations are permitted.", 403);
+            return;
+        }
         try {
             $stmt = $this->pdo->prepare($sql);
             $stmt->execute($params);
